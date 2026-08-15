@@ -1,0 +1,39 @@
+{
+  "dataset": {
+    "root": "output/dataset",
+    "train_n": 1000,
+    "train_seed": 20260815,
+    "eval_n": 60,
+    "eval_seed": 20260901,
+    "architectures": [
+      "dram_1x", "dram_dense", "dram_loose",
+      "finfet_10nm", "finfet_7nm", "finfet_14nm"
+    ],
+    "scale_options": [9.0, 9.5, 10.0, 10.5, 11.0],
+    "rotation_options": [-2.0, -1.0, 0.0, 1.0, 2.0],
+    "scale_prob": 0.35,
+    "rotation_prob": 0.35
+  },
+  "train": {
+    "epochs": 30,
+    "batch_size": 32,
+    "lr": 0.001,
+    "weight_decay": 1e-4,
+    "pos_margin_px": 20.0,
+    "candidate_k": 8,
+    "candidate_min_dist": 25,
+    "checkpoint": "output/weights/ranker.pt",
+    "val_split": 0.1
+  },
+  "infer": {
+    "scales": [9.0, 9.5, 10.0, 10.5, 11.0],
+    "rotations": [-2.0, 0.0, 2.0],
+    "refine_search_radius": 8,
+    "min_score": 0.30,
+    "n_candidates": 8,
+    "candidate_min_dist": 25,
+    "conf_threshold": 0.35,
+    "tie_epsilon": 0.05,
+    "output_csv": "output/localize_results.csv"
+  }
+}

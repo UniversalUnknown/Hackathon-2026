@@ -1,0 +1,295 @@
+# Drift-Sense: How To Run And Test Locally
+
+This document explains everything you need to create the environment, install
+the dependencies, generate a test dataset, train the model, run the
+localization on the test pairs **in a loop**, and what the algorithm does with
+its current measured efficiency.
+
+---
+
+## 1. What the project does (30-second version)
+
+Given a **100x reference** image and a **10x search** image (both 1000x1000 px),
+find the target centre `(x, y)` of the reference inside the search image. The
+search can be scaled 9:1-11:1 vs. the reference, rotated by up to ~2 deg, and
+degraded by realistic SEM noise.
+
+---
+
+## 2. Create a Python environment (venv)
+
+Python 3.10+ is required. Open a terminal in the `submission/` folder:
+
+```bash
+cd submission
+
+# create the virtual environment
+python -m venv .venv
+
+# activate it
+# Linux / macOS:
+source .venv/bin/activate
+# Windows (cmd):
+# .venv\Scripts\activate.bat
+# Windows (PowerShell):
+# .venv\Scripts\Activate.ps1
+
+# upgrade pip (optional but recommended)
+python -m pip install --upgrade pip
+```
+
+> Note: on some Linux distros the system Python is "externally managed"
+> (PEP 668). The venv above avoids that problem entirely.
+
+### What to install
+
+Everything is CPU-only (no GPU needed). From inside the activated venv:
+
+```bash
+pip install -r requirements.txt
+```
+
+`requirements.txt` contains:
+
+```
+numpy>=1.26
+opencv-python-headless>=4.8
+scipy>=1.10
+torch>=2.0
+```
+
+Or install them directly:
+
+```bash
+pip install numpy opencv-python-headless scipy torch
+```
+
+Verify the install:
+
+```bash
+python -c "import numpy, cv2, scipy, torch; print('ok', torch.__version__)"
+```
+
+---
+
+## 3. Files to run (in order)
+
+Run all of these from inside the `submission/` folder with the venv active.
+
+| Step | File | What it does | Typical time |
+|------|------|--------------|--------------|
+| 1 | `generate_dataset.py` | Builds synthetic SEM pairs (train + eval) + `manifest.csv` | ~1.5 s/pair |
+| 2 | `prepare_candidates.py` | Classical ZNCC matching → top-8 candidates per pair (cached `.npz`) | ~0.5 s/pair |
+| 3 | `prep_inputs.py` | Pre-bakes CNN input tensors (fast training) | ~2-3 min |
+| 4 | `train.py` | Trains the CNN re-ranker → `output/weights/ranker.pt` | ~34 s/epoch |
+| 5 | `localize.py` | Single-pair inference; prints `x y` | ~0.5 s |
+| 6 | `evaluate.py` | Full rubric on the held-out eval set + failure figures | ~1-2 min |
+
+### Step 1 — generate the test dataset
+
+```bash
+python generate_dataset.py --train-n 1000 --eval-n 60 --root output/dataset
+```
+
+- Writes images to `output/dataset/{train,eval}/{search,reference}/NNNNN.png`
+- Writes the metadata manifest to `output/dataset/{split}/manifest.csv`
+  (contains `gt_x, gt_y, scale, rotation_deg, architecture, noise_level`, all
+  generator parameters, and the per-pair RNG `seed`)
+
+For a *quick smoke test* (recommended first run) use small numbers:
+
+```bash
+python generate_dataset.py --train-n 50 --eval-n 10 --root output/dataset
+```
+
+### Step 2 — precompute candidates
+
+```bash
+python prepare_candidates.py --split train
+python prepare_candidates.py --split eval
+```
+
+### Step 3 — materialize CNN inputs
+
+```bash
+python prep_inputs.py --split train --variant global
+```
+
+### Step 4 — train the re-ranker
+
+```bash
+python train.py --config configs/default.json --epochs 30 --variant global
+```
+
+Watch the `val_top1_hit_pos` line in the log (fraction of pairs with a
+learnable candidate where the model ranks the true location #1). A checkpoint
+is saved automatically whenever validation improves.
+
+### Step 5 — test one pair
+
+```bash
+python localize.py \
+  --search output/dataset/eval/search/00000.png \
+  --reference output/dataset/eval/reference/00000.png \
+  --weights output/weights/ranker.pt
+```
+
+Output (stdout): the predicted target centre in search-image pixels, e.g.:
+
+```
+243.300 583.700
+```
+
+Exit code `0` = success, `1` = failure (message on stderr).
+
+---
+
+## 4. Running the test in a loop
+
+### Option A — the whole loop is `evaluate.py`
+
+This is the intended way: it loops over **all** eval pairs, computes the error
+against the ground truth, and writes results + metrics:
+
+```bash
+python evaluate.py --config configs/default.json --weights output/weights/ranker.pt
+```
+
+Results land in `output/eval_results/`:
+- `localize_results.csv` — every pair, true vs. predicted, error, metadata
+- `metrics_summary.json` — pass rates, error stats, breakdowns, runtime
+- `failures/*.png` + `FAILURES.md` — worst cases with root-cause notes
+
+### Option B — a manual bash loop over `localize.py`
+
+If you want to run the CLI in a loop yourself (e.g. to test your own image
+folder), put pairs in a directory and loop:
+
+```bash
+for f in output/dataset/eval/search/*.png; do
+  id=$(basename "$f" .png)
+  echo "--- sample $id ---"
+  python localize.py \
+    --search "output/dataset/eval/search/$id.png" \
+    --reference "output/dataset/eval/reference/$id.png" \
+    --weights output/weights/ranker.pt
+done
+```
+
+To capture results into a CSV while looping:
+
+```bash
+out=results.csv
+echo "id,pred_x,pred_y" > "$out"
+for f in output/dataset/eval/search/*.png; do
+  id=$(basename "$f" .png)
+  xy=$(python localize.py --search "output/dataset/eval/search/$id.png" \
+        --reference "output/dataset/eval/reference/$id.png" \
+        --weights output/weights/ranker.pt)
+  echo "$id,$xy" >> "$out"
+done
+```
+
+### Option C — loop over arbitrary pairs (your own images)
+
+Keep your test images in two folders `my_search/` and `my_reference/` with the
+same base names and loop the same way. There is no need for a manifest — the
+ground truth is only required for scoring, not for running.
+
+---
+
+## 5. Algorithm used
+
+Hybrid **classical + learned** pipeline:
+
+1. **Classical search engine** (`ml/zncc.py`)
+   - Resize the reference to each scale in `[9.0, 9.5, 10.0, 10.5, 11.0]`
+     (covers the 9:1-11:1 tolerance) and each rotation in `[-2, 0, 2] deg`.
+   - Zero-mean normalized cross-correlation (`cv2.TM_CCOEFF_NORMED`) against
+     the full search image → a ZNCC score map per (scale, rotation).
+   - Take the max over rotations at every location, then non-maximum
+     suppression (NMS, min distance 25 px) → the top-8 candidate locations,
+     each with its winning scale/rotation and per-scale scores.
+   - This is fast and physically grounded, but repeated patterns produce many
+     equally good peaks.
+
+2. **Learned re-ranker** (`ml/ranker.py`, CNN)
+   - A small CNN scores each candidate: "is this the TRUE site of the
+     reference?" (binary classification, BCE loss; positive = candidate centre
+     within 20 px of ground truth; the other top-K peaks are hard negatives).
+   - Input (global variant, 3 channels at 64x64): the whole search image, the
+     same image with a Gaussian marker at the candidate, and the tiled
+     reference pattern. This lets the network use global structure (zone
+     boundaries, mats) to disambiguate locations that look identical locally.
+   - 4 conv blocks (32→64→128→128) + global-avg-pool + MLP head, plus the 6
+     numeric features (overall score + per-scale scores).
+
+3. **Selection & refinement** (`ml/predict.py`)
+   - Rank candidates by model probability.
+   - If several candidates are within a small probability tie, the problem
+     statement's rule applies: choose the valid match closest to the
+     search-image centre.
+   - Re-match the winner with its (scale, rotation) template in a small window
+     and apply a parabolic fit → **sub-pixel** accuracy (`refine_peak`).
+
+The ZNCC step provides sharp, meaningful candidates; the CNN resolves the
+repeated-pattern ambiguity; the parabolic fit delivers sub-pixel precision.
+
+---
+
+## 6. Current efficiency (measured on this machine, CPU)
+
+Hardware note: results below are for a laptop-class CPU (single-threaded,
+no GPU). Times scale with cores when you run multiple jobs.
+
+**Speed**
+
+| Operation | Time |
+|-----------|------|
+| Pair generation | ~1.5 s/pair |
+| Candidate computation (ZNCC, 5 scales x 3 rotations) | ~0.5 s/pair |
+| Full localization (candidates + ranker + refine) | ~0.5 s/pair |
+| Ranker training | ~34 s/epoch (900 samples, batch 32) |
+
+**Accuracy** (train set, 1000 pairs; eval set is 60 held-out pairs)
+
+| Metric | Value |
+|--------|-------|
+| True site found in top-8 candidates | ~78.6% of pairs |
+| ZNCC-score-only selection (classical baseline) | ~67% of learnable pairs (~52% overall) |
+| CNN re-ranker (global context), validation top-1 | ~62% of learnable pairs (~48% overall) |
+| Sub-pixel refinement on the chosen candidate | < 2 px error typical |
+| Run the full evaluation for exact final numbers | `python evaluate.py ...` |
+
+Important caveat: the remaining ~21% of pairs are *fundamentally ambiguous* —
+the reference pattern is perfectly periodic and the true site's surroundings
+are statistically identical to a duplicate's, and targets near the image edge
+are clipped (weakening the correlation peak). No method (classical or learned)
+can resolve these from the images alone; they are the documented failure cases
+in `output/eval_results/FAILURES.md`.
+
+---
+
+## 7. Config reference
+
+Everything tunable lives in `configs/default.json`:
+
+- `dataset`: number of train/eval pairs, seed, architectures, scale and
+  rotation options and their probabilities.
+- `train`: epochs, batch size, learning rate, positive margin (px), candidate
+  count K, checkpoint path, validation split.
+- `infer`: the scale/rotation grid, candidate count, score/confidence
+  thresholds, tie-break epsilon, output CSV path.
+
+---
+
+## 8. Troubleshooting
+
+- `ModuleNotFoundError: numpy/cv2/torch` → the venv is not active, or you
+  forgot `pip install -r requirements.txt`.
+- `Missing output/dataset/.../manifest.csv` → run `generate_dataset.py` first.
+- `No candidate caches found` → run `prepare_candidates.py --split train`
+  (and `--split eval`) first.
+- `cannot read search image` → wrong path; `localize.py` exits with code 1.
+- PEP 668 "externally managed environment" error on `pip install` → you are
+  not using the venv; activate it first.
