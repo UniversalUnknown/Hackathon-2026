@@ -214,8 +214,9 @@ The program does this in five steps:
 2. **Find promising spots (classical search).** It compares the reference
    against every position in the search photo. Because the scale and rotation
    are only known approximately, it tries a small grid: 5 scales (9.0-11.0)
-   x 3 rotations (-2, 0, +2 degrees). It keeps the 8 best, well-separated
-   matches ("candidates"), each with the scale/rotation that scored best.
+   x 5 rotations (-2 to +2 degrees in 1-degree steps). It keeps the 8 best,
+   well-separated matches ("candidates"), each with the scale/rotation that
+   scored best.
 
 3. **Check the defects (the clever part).** These patterns are periodic, so
    many spots look identical. But each spot also contains *unique* details --
@@ -226,9 +227,8 @@ The program does this in five steps:
    not. This is what tells one box apart from all the identical boxes.
 
 4. **Pick the winner.** The winning spot is the one with the best combination
-   of the plain match score and the defect check (measured: this raised the
-   pass rate from ~45% to ~63%). A CNN also scores each spot using the whole
-   scene and its probability is reported as confidence.
+   of the plain match score and the defect check. A CNN also scores each spot
+   using the whole scene and its probability is reported as confidence.
 
 5. **Zoom in to sub-pixel accuracy.** Around the winner it re-matches the
    template in a tiny window and fits a parabola to the score peak, giving a
@@ -253,8 +253,8 @@ no GPU). Times scale with cores when you run multiple jobs.
 | Operation | Time |
 |-----------|------|
 | Pair generation | ~1.5 s/pair |
-| Candidate computation (ZNCC, 5 scales x 3 rotations) | ~0.5 s/pair |
-| Full localization (candidates + ranker + refine) | ~0.5 s/pair |
+| Candidate computation (ZNCC, 5 scales x 5 rotations) | ~0.7 s/pair |
+| Full localization (candidates + ranker + refine) | ~0.74 s/pair |
 | Ranker training | ~34 s/epoch (900 samples, batch 32) |
 
 **Accuracy** (measured on the 60 held-out eval pairs, no training-set overlap)
@@ -262,17 +262,18 @@ no GPU). Times scale with cores when you run multiple jobs.
 | Metric | Value |
 |--------|-------|
 | True site among the top-8 candidates (recall, with noise filter) | ~83% (50/60) |
-| Final answer within 5 px of truth (main pass rate) | **63.3%** (38/60) |
-| Final answer within 1 px (sub-pixel hits) | 30% (18/60) |
-| Average error across all 60 | ~67 px |
+| Final answer within 5 px of truth (main pass rate) | **66.7%** (40/60) |
+| Final answer within 1 px (sub-pixel hits) | 35% (21/60) |
+| Average error across all 60 | ~62 px |
 | Same pipeline **without** the defect check (previous version) | 56.7% (34/60) |
 | Same pipeline without noise filter or defect check (original) | 45% (27/60) |
 | Sub-pixel refinement on the chosen candidate | < 2 px error typical |
 
-What the numbers mean: for 38 of the 60 test images the final answer lands
-within 5 px of the true target centre, and for 18 of them within 1 px. Two
-measured improvements got us here: the noise filter (+11.7 points) and the
-FFT defect check (+6.6 points).
+What the numbers mean: for 40 of the 60 test images the final answer lands
+within 5 px of the true target centre, and for 21 of them within 1 px. Three
+measured improvements got us here: the noise filter (+11.7 points), the FFT
+defect check (+6.6 points) and covering the full rotation range in the search
+grid (+3.4 points).
 
 Important caveat: for the images that are still missed, the target is either
 buried so deep in noise that no peak survives, or the pattern is perfectly
@@ -291,9 +292,9 @@ Everything tunable lives in `configs/default.json`:
 - `train`: epochs, batch size, learning rate, positive margin (px), candidate
   count K, checkpoint path, validation split.
 - `infer`: the scale/rotation grid, candidate count, noise-filter size
-  (`prefilter_median`), the selection rule (`fuse`/`zncc`/`cnn`/`cnn_tie`)
-  and its `defect_weight`, score thresholds, tie-break epsilon, output CSV
-  path.
+  (`prefilter_median`), the selection rule
+  (`fuse`/`zncc`/`cnn`/`cnn_tie`/`fuse_cnn`) and its `defect_weight` /
+  `cnn_weight`, score thresholds, tie-break epsilon, output CSV path.
 
 ---
 

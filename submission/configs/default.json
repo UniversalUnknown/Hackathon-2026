@@ -27,7 +27,7 @@
   },
   "infer": {
     "scales": [9.0, 9.5, 10.0, 10.5, 11.0],
-    "rotations": [-2.0, 0.0, 2.0],
+    "rotations": [-2.0, -1.0, 0.0, 1.0, 2.0],
     "refine_search_radius": 8,
     "min_score": 0.30,
     "n_candidates": 8,

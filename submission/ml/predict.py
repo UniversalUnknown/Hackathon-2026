@@ -19,9 +19,11 @@ Pipeline
      - ``"fuse"`` (default): combined = ZNCC score + ``defect_weight`` *
        defect-residue score; highest combined wins. Measured best (+8 hits).
      - ``"zncc"``: the correlation winner wins.
-     - ``"cnn_tie"``: as ``"fuse"``, but when the top two ZNCC scores are
-       nearly tied (gap < ``tie_epsilon``) the most probable CNN candidate
-       wins instead.
+      - ``"cnn_tie"``: as ``"fuse"``, but when the top two ZNCC scores are
+        nearly tied (gap < ``tie_epsilon``) the most probable CNN candidate
+        wins instead.
+      - ``"fuse_cnn"``: combined = ZNCC score + ``defect_weight`` *
+        defect-residue score + ``cnn_weight`` * CNN probability.
 6. Parabolic sub-pixel refinement on the winning template alignment.
 """
 
@@ -125,6 +127,10 @@ class Localizer:
                 pick = max(cands, key=lambda c: c["prob"])
             else:
                 pick = cands[int((scores + w_def * defects).argmax())]
+        elif mode == "fuse_cnn":
+            w_cnn = float(inf.get("cnn_weight", 0.1))
+            combined = scores + w_def * defects + w_cnn * np.array([c["prob"] for c in cands])
+            pick = cands[int(combined.argmax())]
         else:  # "fuse" (default)
             pick = cands[int((scores + w_def * defects).argmax())]
 

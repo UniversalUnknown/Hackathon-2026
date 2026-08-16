@@ -11,7 +11,7 @@ Root cause: low-SNR search image (high/severe noise level)
 
 
 ## failure 52 (finfet_10nm, medium, scale 9.000, rot 0.000)
-error 427.221 px, ZNCC score 0.719, model prob 0.576. Green = GT, red = prediction.
+error 427.221 px, ZNCC score 0.719, model prob 0.577. Green = GT, red = prediction.
 ![52](failures/fail_00052.png)
 Root cause: repeated-pattern ambiguity resolved in favour of a periodic duplicate
 
