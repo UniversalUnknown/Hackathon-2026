@@ -53,6 +53,7 @@ def main() -> None:
     pos_margin = cfg["train"]["pos_margin_px"]
     scales = cfg["infer"]["scales"]
     rotations = cfg["infer"]["rotations"]
+    med = int(cfg["infer"].get("prefilter_median", 0))
 
     out_dir = split_root / "candidates"
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -69,6 +70,9 @@ def main() -> None:
         if search is None or reference is None:
             print(f"skip {sid}: missing image", flush=True)
             continue
+        if med > 1:
+            import cv2 as _cv2
+            search = _cv2.medianBlur(search, med)
 
         maps = correlation_maps(search, reference, scales, rotations)
         cands = top_k_candidates(maps, k=k, min_dist=min_dist)

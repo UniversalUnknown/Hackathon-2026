@@ -198,42 +198,48 @@ ground truth is only required for scoring, not for running.
 
 ---
 
-## 5. Algorithm used
+## 5. How it works (plain English)
 
-Hybrid **classical + learned** pipeline:
+The task: you give the program a small **reference** photo of the sample and a
+big **search** photo. It finds the one spot in the search photo that shows the
+same thing as the reference, even when the search photo is scaled ~10x,
+rotated a couple of degrees, and noisy. It returns the `(x, y)` of that spot.
 
-1. **Classical search engine** (`ml/zncc.py`)
-   - Resize the reference to each scale in `[9.0, 9.5, 10.0, 10.5, 11.0]`
-     (covers the 9:1-11:1 tolerance) and each rotation in `[-2, 0, 2] deg`.
-   - Zero-mean normalized cross-correlation (`cv2.TM_CCOEFF_NORMED`) against
-     the full search image → a ZNCC score map per (scale, rotation).
-   - Take the max over rotations at every location, then non-maximum
-     suppression (NMS, min distance 25 px) → the top-8 candidate locations,
-     each with its winning scale/rotation and per-scale scores.
-   - This is fast and physically grounded, but repeated patterns produce many
-     equally good peaks.
+The program does this in five steps:
 
-2. **Learned re-ranker** (`ml/ranker.py`, CNN)
-   - A small CNN scores each candidate: "is this the TRUE site of the
-     reference?" (binary classification, BCE loss; positive = candidate centre
-     within 20 px of ground truth; the other top-K peaks are hard negatives).
-   - Input (global variant, 3 channels at 64x64): the whole search image, the
-     same image with a Gaussian marker at the candidate, and the tiled
-     reference pattern. This lets the network use global structure (zone
-     boundaries, mats) to disambiguate locations that look identical locally.
-   - 4 conv blocks (32→64→128→128) + global-avg-pool + MLP head, plus the 6
-     numeric features (overall score + per-scale scores).
+1. **Clean the noise.** The search photo gets a gentle 3x3 median filter,
+   which smooths away the speckle noise so the true pattern shows up more
+   clearly. (Measured: this alone fixed 6 of the 60 test images.)
 
-3. **Selection & refinement** (`ml/predict.py`)
-   - Rank candidates by model probability.
-   - If several candidates are within a small probability tie, the problem
-     statement's rule applies: choose the valid match closest to the
-     search-image centre.
-   - Re-match the winner with its (scale, rotation) template in a small window
-     and apply a parabolic fit → **sub-pixel** accuracy (`refine_peak`).
+2. **Find promising spots (classical search).** It compares the reference
+   against every position in the search photo. Because the scale and rotation
+   are only known approximately, it tries a small grid: 5 scales (9.0-11.0)
+   x 3 rotations (-2, 0, +2 degrees). It keeps the 8 best, well-separated
+   matches ("candidates"), each with the scale/rotation that scored best.
 
-The ZNCC step provides sharp, meaningful candidates; the CNN resolves the
-repeated-pattern ambiguity; the parabolic fit delivers sub-pixel precision.
+3. **Check the defects (the clever part).** These patterns are periodic, so
+   many spots look identical. But each spot also contains *unique* details --
+   the little defects and irregularities. The program takes a fast Fourier
+   transform of the reference and of each candidate's surroundings, subtracts
+   the repeating background, and compares only what is left (the "residue").
+   The true spot shares the reference's unique details; look-alike copies do
+   not. This is what tells one box apart from all the identical boxes.
+
+4. **Pick the winner.** The winning spot is the one with the best combination
+   of the plain match score and the defect check (measured: this raised the
+   pass rate from ~45% to ~63%). A CNN also scores each spot using the whole
+   scene and its probability is reported as confidence.
+
+5. **Zoom in to sub-pixel accuracy.** Around the winner it re-matches the
+   template in a tiny window and fits a parabola to the score peak, giving a
+   final `(x, y)` accurate to well under a pixel when the right spot was found.
+
+**The ML part.** The CNN re-ranker (`ml/ranker.py`) is a small convolutional
+network trained on our generated pairs to answer "is this candidate the true
+site?" It looks at the whole scene (search image, a marker at the candidate,
+and the reference pattern) because repeated patterns look identical up close.
+Its probability is reported as confidence for every candidate and can break
+near-ties (`cnn_tie` mode).
 
 ---
 
@@ -251,22 +257,28 @@ no GPU). Times scale with cores when you run multiple jobs.
 | Full localization (candidates + ranker + refine) | ~0.5 s/pair |
 | Ranker training | ~34 s/epoch (900 samples, batch 32) |
 
-**Accuracy** (train set, 1000 pairs; eval set is 60 held-out pairs)
+**Accuracy** (measured on the 60 held-out eval pairs, no training-set overlap)
 
 | Metric | Value |
 |--------|-------|
-| True site found in top-8 candidates | ~78.6% of pairs |
-| ZNCC-score-only selection (classical baseline) | ~67% of learnable pairs (~52% overall) |
-| CNN re-ranker (global context), validation top-1 | ~62% of learnable pairs (~48% overall) |
+| True site among the top-8 candidates (recall, with noise filter) | ~83% (50/60) |
+| Final answer within 5 px of truth (main pass rate) | **63.3%** (38/60) |
+| Final answer within 1 px (sub-pixel hits) | 30% (18/60) |
+| Average error across all 60 | ~67 px |
+| Same pipeline **without** the defect check (previous version) | 56.7% (34/60) |
+| Same pipeline without noise filter or defect check (original) | 45% (27/60) |
 | Sub-pixel refinement on the chosen candidate | < 2 px error typical |
-| Run the full evaluation for exact final numbers | `python evaluate.py ...` |
 
-Important caveat: the remaining ~21% of pairs are *fundamentally ambiguous* —
-the reference pattern is perfectly periodic and the true site's surroundings
-are statistically identical to a duplicate's, and targets near the image edge
-are clipped (weakening the correlation peak). No method (classical or learned)
-can resolve these from the images alone; they are the documented failure cases
-in `output/eval_results/FAILURES.md`.
+What the numbers mean: for 38 of the 60 test images the final answer lands
+within 5 px of the true target centre, and for 18 of them within 1 px. Two
+measured improvements got us here: the noise filter (+11.7 points) and the
+FFT defect check (+6.6 points).
+
+Important caveat: for the images that are still missed, the target is either
+buried so deep in noise that no peak survives, or the pattern is perfectly
+periodic so several spots are statistically identical. No method can tell
+these apart from the images alone; they are the documented failure cases in
+`output/eval_results/FAILURES.md`.
 
 ---
 
@@ -278,8 +290,10 @@ Everything tunable lives in `configs/default.json`:
   rotation options and their probabilities.
 - `train`: epochs, batch size, learning rate, positive margin (px), candidate
   count K, checkpoint path, validation split.
-- `infer`: the scale/rotation grid, candidate count, score/confidence
-  thresholds, tie-break epsilon, output CSV path.
+- `infer`: the scale/rotation grid, candidate count, noise-filter size
+  (`prefilter_median`), the selection rule (`fuse`/`zncc`/`cnn`/`cnn_tie`)
+  and its `defect_weight`, score thresholds, tie-break epsilon, output CSV
+  path.
 
 ---
 

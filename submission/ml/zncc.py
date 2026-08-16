@@ -125,6 +125,31 @@ def subpixel_parabola(peak_val: float, left: float, right: float) -> float:
     return 0.5 * (left - right) / denom
 
 
+def periodic_reconstruction(img: np.ndarray, keep: float = 0.01) -> np.ndarray:
+    """Rebuild the periodic (lattice) part of an image from its dominant FFT
+    harmonics. The residue (img - periodic) is the non-periodic content --
+    defects, unique local structure -- which is what distinguishes one site of
+    a repeated pattern from another."""
+    f = np.fft.fftshift(np.fft.fft2(img.astype(np.float32)))
+    mag = np.abs(f)
+    thr = np.quantile(mag.ravel(), 1.0 - keep)
+    mask = (mag > thr).astype(np.float32)
+    return np.real(np.fft.ifft2(np.fft.ifftshift(f * mask)))
+
+
+def defect_residue_ncc(template: np.ndarray, window: np.ndarray) -> float:
+    """Normalized cross-correlation of the two images' *non-periodic residue*.
+    A true site shares the reference's defects; a false periodic repeat does
+    not, so this signal separates them even when the plain ZNCC score is tied.
+    Returns a value in [-1, 1]."""
+    rt = template.astype(np.float32) - periodic_reconstruction(template)
+    rw = window.astype(np.float32) - periodic_reconstruction(window)
+    rt = rt - rt.mean()
+    rw = rw - rw.mean()
+    denom = np.sqrt(float((rt * rt).sum()) * float((rw * rw).sum())) + 1e-9
+    return float((rt * rw).sum() / denom)
+
+
 def refine_peak(search: np.ndarray, reference: np.ndarray, cxc: float, cyc: float,
                 scale: float, rot: float, search_radius: int = 8) -> dict:
     """Refine a candidate (given its CENTRE coords) to sub-pixel by re-matching

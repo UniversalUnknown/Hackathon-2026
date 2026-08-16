@@ -1,17 +1,17 @@
-## failure 50 (finfet_14nm, medium, scale 11.000, rot 0.000)
-error 817.683 px, ZNCC score 0.676, model prob 0.542. Green = GT, red = prediction.
-![50](failures/fail_00050.png)
+## failure 54 (dram_dense, severe, scale 10.000, rot 0.000)
+error 628.853 px, ZNCC score 0.622, model prob 0.593. Green = GT, red = prediction.
+![54](failures/fail_00054.png)
+Root cause: low-SNR search image (high/severe noise level)
+
+
+## failure 48 (dram_loose, severe, scale 10.000, rot 0.000)
+error 492.657 px, ZNCC score 0.615, model prob 0.564. Green = GT, red = prediction.
+![48](failures/fail_00048.png)
+Root cause: low-SNR search image (high/severe noise level)
+
+
+## failure 52 (finfet_10nm, medium, scale 9.000, rot 0.000)
+error 427.221 px, ZNCC score 0.719, model prob 0.576. Green = GT, red = prediction.
+![52](failures/fail_00052.png)
 Root cause: repeated-pattern ambiguity resolved in favour of a periodic duplicate
-
-
-## failure 6 (dram_1x, severe, scale 10.000, rot 0.000)
-error 763.889 px, ZNCC score 0.395, model prob 0.543. Green = GT, red = prediction.
-![6](failures/fail_00006.png)
-Root cause: low-SNR search image (high/severe noise level)
-
-
-## failure 34 (dram_1x, high, scale 10.000, rot 0.000)
-error 753.404 px, ZNCC score 0.700, model prob 0.587. Green = GT, red = prediction.
-![34](failures/fail_00034.png)
-Root cause: low-SNR search image (high/severe noise level)
 
