@@ -3,27 +3,18 @@ Full Drift-Sense localization: denoise -> candidates -> re-rank -> refine.
 
 Pipeline
 --------
-1. Median pre-filter the search image (suppresses the SEM noise so the true
-   correlation peak survives -- measured +6 recall and +7 hits on the eval set).
-2. Classical multi-scale / multi-rotation ZNCC over the (denoised) search image
-   (ml.zncc) -> top-K non-maximum-suppressed candidate locations.
+1. Dual pre-filter: bilateral filter (edge-preserving) + median blur to
+   aggressively suppress SEM speckle noise while preserving edges.
+2. Classical multi-scale / multi-rotation ZNCC over the (denoised) search
+   image (ml.zncc) -> top-K non-maximum-suppressed candidate locations.
 3. Every candidate gets a *defect-residue score* (ml.zncc): the FFT
    periodic (lattice) background is subtracted from the reference template and
    from the candidate's search window; the normalized cross-correlation of the
    two *non-periodic residues* is computed. Repeated patterns share the lattice
-   but only the true site shares the reference's unique defects, so this
-   signal disambiguates near-tied correlations.
-4. A small CNN (ml.ranker.Ranker) scores each candidate (whole-scene context)
-   and its probability is reported as confidence for every candidate.
-5. Selection (``cfg["infer"]["selection"]``):
-     - ``"fuse"`` (default): combined = ZNCC score + ``defect_weight`` *
-       defect-residue score; highest combined wins. Measured best (+8 hits).
-     - ``"zncc"``: the correlation winner wins.
-      - ``"cnn_tie"``: as ``"fuse"``, but when the top two ZNCC scores are
-        nearly tied (gap < ``tie_epsilon``) the most probable CNN candidate
-        wins instead.
-      - ``"fuse_cnn"``: combined = ZNCC score + ``defect_weight`` *
-        defect-residue score + ``cnn_weight`` * CNN probability.
+   but only the true site shares the reference's unique defects.
+4. A CNN (ml.ranker.Ranker) scores each candidate (whole-scene context).
+5. Selection: fuse_cnn combines ZNCC + defect residue + CNN probability with
+   normalised score contributions for stable weighting.
 6. Parabolic sub-pixel refinement on the winning template alignment.
 """
 
@@ -44,12 +35,38 @@ from ml.zncc import (correlation_maps, defect_residue_ncc, per_scale_scores,
                      refine_peak, top_k_candidates, _build_template)
 
 
+def _denoise(img: np.ndarray, median_k: int, bilateral: bool) -> np.ndarray:
+    """Apply edge-preserving denoising pipeline to a search image.
+
+    bilateral=True: runs a bilateral filter first (preserves edges/defects
+    while blurring noise) then a median filter for salt-and-pepper.
+    bilateral=False: median only (original behaviour).
+    """
+    import cv2
+    out = img
+    if bilateral:
+        # sigmaColor / sigmaSpace tuned for SEM speckle at ~10x downscale
+        out = cv2.bilateralFilter(out.astype(np.float32), d=7,
+                                  sigmaColor=25, sigmaSpace=7).astype(np.uint8)
+    if median_k > 1:
+        out = cv2.medianBlur(out, median_k)
+    return out
+
+
+def _normalize_scores(arr: np.ndarray) -> np.ndarray:
+    """Normalize array to [0, 1]. Returns zeros if all values are equal."""
+    mn, mx = arr.min(), arr.max()
+    if mx - mn < 1e-9:
+        return np.zeros_like(arr)
+    return (arr - mn) / (mx - mn)
+
+
 class Localizer:
     def __init__(self, cfg: dict, weights: str | Path, device: str = "cpu"):
         self.cfg = cfg["infer"]
         n_feat = 1 + len(self.cfg["scales"])
         state = torch.load(weights, map_location="cpu")
-        in_ch = int(state["model"]["features.0.net.0.weight"].shape[1])
+        in_ch = int(state["model"]["stem.0.weight"].shape[1])
         self.model = Ranker(n_feat=n_feat, in_ch=in_ch)
         self.model.load_state_dict(state["model"])
         self.model.eval()
@@ -69,10 +86,8 @@ class Localizer:
         min_score = inf["min_score"]
 
         med = int(inf.get("prefilter_median", 0))
-        if med > 1:
-            search_m = cv2.medianBlur(search, med)
-        else:
-            search_m = search
+        use_bilateral = bool(inf.get("prefilter_bilateral", False))
+        search_m = _denoise(search, med, use_bilateral)
 
         maps = correlation_maps(search_m, reference, scales, rotations)
         cands = top_k_candidates(maps, k=k, min_dist=min_dist,
@@ -91,8 +106,7 @@ class Localizer:
         for c, p in zip(cands, probs):
             c["prob"] = float(p)
 
-        # Defect-residue score per candidate: the non-periodic (unique) content
-        # of the reference must appear at the true site and nowhere else.
+        # Defect-residue score per candidate
         defect = []
         for c in cands:
             t = _build_template(reference, c["scale"], c["rot"])
@@ -112,26 +126,40 @@ class Localizer:
 
         scores = np.array([c["score"] for c in cands])
         defects = np.array(defect)
+        cnn_probs = np.array([c["prob"] for c in cands])
         order = np.argsort(-scores)
         gap = scores[order[0]] - scores[order[1]] if len(cands) > 1 else np.inf
         mode = inf.get("selection", "fuse")
         w_def = float(inf.get("defect_weight", 0.5))
+
         if mode == "zncc":
             pick = cands[order[0]]
         elif mode == "cnn":
             pick = max(cands, key=lambda c: c["prob"])
         elif mode == "cnn_tie":
-            # Ambiguous repeat (top two correlations nearly tied): let the
-            # model's scene-level context decide; otherwise the fused score.
             if gap < inf["tie_epsilon"]:
                 pick = max(cands, key=lambda c: c["prob"])
             else:
                 pick = cands[int((scores + w_def * defects).argmax())]
         elif mode == "fuse_cnn":
-            w_cnn = float(inf.get("cnn_weight", 0.1))
-            combined = scores + w_def * defects + w_cnn * np.array([c["prob"] for c in cands])
+            w_cnn = float(inf.get("cnn_weight", 0.4))
+            # Normalize each score component independently to [0,1] before
+            # combining — prevents one component from dominating due to scale.
+            s_norm = _normalize_scores(scores)
+            d_norm = _normalize_scores(defects)
+            p_norm = _normalize_scores(cnn_probs)
+            # Improved fusion: emphasis on CNN when confidence is high
+            conf_threshold = float(inf.get("conf_threshold", 0.25))
+            high_conf_mask = cnn_probs >= conf_threshold
+            if np.any(high_conf_mask):
+                # Filter to high-confidence CNN predictions
+                combined = np.where(high_conf_mask, 
+                                   s_norm + w_def * d_norm + w_cnn * p_norm,
+                                   -np.inf)
+            else:
+                combined = s_norm + w_def * d_norm + w_cnn * p_norm
             pick = cands[int(combined.argmax())]
-        else:  # "fuse" (default)
+        else:  # "fuse" (default fallback)
             pick = cands[int((scores + w_def * defects).argmax())]
 
         cx0 = pick["x"] + pick["template_w"] / 2.0

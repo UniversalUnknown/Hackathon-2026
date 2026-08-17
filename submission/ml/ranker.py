@@ -1,17 +1,20 @@
 """
-Learned candidate re-ranker.
+Learned candidate re-ranker — improved architecture.
 
-Given the classical ZNCC candidates, a small CNN scores each one: how likely
-is this candidate the TRUE location of the reference pattern? It sees
+Given the classical ZNCC candidates, a deeper residual CNN with Squeeze-and-
+Excitation attention scores each one: how likely is this candidate the TRUE
+location of the reference pattern? It sees
   * a context crop of the search image around the candidate (2 template widths
     square, downsampled to 64x64, z-scored),
   * the reference template (32x32, z-scored, tiled 2x2 -> 64x64),
   * the per-scale ZNCC scores at the candidate location (numeric features).
 
-Training labels: candidate is positive if its centre is within 20 px of the
-ground-truth centre. This directly learns repeated-pattern disambiguation
-(the network can use mat/strip boundaries and surrounding context that a
-plain correlation peak cannot).
+Architecture improvements over baseline:
+  - Residual blocks with skip connections for better gradient flow
+  - Squeeze-and-Excitation (SE) attention for channel re-weighting
+  - Wider feature maps: 48->96->192 channels
+  - LayerNorm in MLP head for stable training
+  - Deeper MLP: 192+n_feat -> 128 -> 64 -> 1
 """
 
 from __future__ import annotations
@@ -24,43 +27,113 @@ import torch.nn.functional as F
 from ml.preprocess import zscore
 
 
-class _ConvBn(nn.Module):
-    def __init__(self, cin, cout):
+class _SEBlock(nn.Module):
+    """Squeeze-and-Excitation channel attention."""
+    def __init__(self, channels: int, reduction: int = 8):
         super().__init__()
-        self.net = nn.Sequential(
-            nn.Conv2d(cin, cout, 3, padding=1, bias=False),
-            nn.BatchNorm2d(cout),
+        self.pool = nn.AdaptiveAvgPool2d(1)
+        self.fc = nn.Sequential(
+            nn.Linear(channels, max(channels // reduction, 8), bias=False),
             nn.ReLU(inplace=True),
+            nn.Linear(max(channels // reduction, 8), channels, bias=False),
+            nn.Sigmoid(),
         )
 
     def forward(self, x):
-        return self.net(x)
+        b, c, _, _ = x.shape
+        w = self.pool(x).view(b, c)
+        w = self.fc(w).view(b, c, 1, 1)
+        return x * w
+
+
+class _ResBlock(nn.Module):
+    """Residual conv block with BN + ReLU."""
+    def __init__(self, channels: int):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Conv2d(channels, channels, 3, padding=1, bias=False),
+            nn.BatchNorm2d(channels),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(channels, channels, 3, padding=1, bias=False),
+            nn.BatchNorm2d(channels),
+        )
+        self.relu = nn.ReLU(inplace=True)
+
+    def forward(self, x):
+        return self.relu(x + self.net(x))
 
 
 class Ranker(nn.Module):
+    """Enhanced residual CNN ranker with SE attention and improved capacity.
+
+    Input : x (B, in_ch, 64, 64) image tensor
+            feat (B, n_feat) per-candidate numeric features
+    Output: (B,) raw logit — sigmoid = P(true site)
+    """
     def __init__(self, n_feat: int = 6, in_ch: int = 2):
         super().__init__()
-        self.features = nn.Sequential(
-            _ConvBn(in_ch, 32),
-            nn.MaxPool2d(2),                      # 32x32
-            _ConvBn(32, 64),
-            nn.MaxPool2d(2),                      # 16x16
-            _ConvBn(64, 128),
-            nn.MaxPool2d(2),                      # 8x8
-            _ConvBn(128, 128),
+        # Stem: in_ch -> 64
+        self.stem = nn.Sequential(
+            nn.Conv2d(in_ch, 64, 3, padding=1, bias=False),
+            nn.BatchNorm2d(64),
+            nn.ReLU(inplace=True),
         )
+        # Layer 1: 64 -> 64, pool to 32x32, with two residual blocks
+        self.layer1 = nn.Sequential(
+            _ResBlock(64),
+            _ResBlock(64),
+            nn.MaxPool2d(2),
+        )
+        # Layer 2: 64 -> 128, pool to 16x16
+        self.layer2 = nn.Sequential(
+            nn.Conv2d(64, 128, 3, padding=1, bias=False),
+            nn.BatchNorm2d(128),
+            nn.ReLU(inplace=True),
+            _ResBlock(128),
+            _ResBlock(128),
+            nn.MaxPool2d(2),
+        )
+        # Layer 3: 128 -> 256, pool to 8x8
+        self.layer3 = nn.Sequential(
+            nn.Conv2d(128, 256, 3, padding=1, bias=False),
+            nn.BatchNorm2d(256),
+            nn.ReLU(inplace=True),
+            _ResBlock(256),
+            _ResBlock(256),
+            nn.MaxPool2d(2),
+        )
+        # SE attention on 256-channel feature map
+        self.se = _SEBlock(256, reduction=16)
+
+        # MLP head: fuses visual features + numeric features with improved depth
         self.mlp = nn.Sequential(
-            nn.Linear(128 + n_feat, 64),
+            nn.Linear(256 + n_feat, 192),
+            nn.LayerNorm(192),
             nn.ReLU(inplace=True),
             nn.Dropout(0.3),
+            nn.Linear(192, 128),
+            nn.LayerNorm(128),
+            nn.ReLU(inplace=True),
+            nn.Dropout(0.3),
+            nn.Linear(128, 64),
+            nn.ReLU(inplace=True),
+            nn.Dropout(0.2),
             nn.Linear(64, 1),
         )
 
     def forward(self, x, feat):
-        h = self.features(x)                      # B,128,8,8
-        h = h.mean(dim=(2, 3))                    # global avg pool
+        h = self.stem(x)       # B, 64, 64, 64
+        h = self.layer1(h)     # B, 64, 32, 32
+        h = self.layer2(h)     # B, 128, 16, 16
+        h = self.layer3(h)     # B, 256, 8, 8
+        h = self.se(h)         # channel attention
+        h = h.mean(dim=(2, 3)) # global average pool -> B, 256
         return self.mlp(torch.cat([h, feat], dim=1)).squeeze(-1)
 
+
+# ---------------------------------------------------------------------------
+# Input-building helpers (used by both training pipeline and inference)
+# ---------------------------------------------------------------------------
 
 def context_crop(search: np.ndarray, cx: float, cy: float,
                  ctx_size: int, out: int = 64) -> np.ndarray:

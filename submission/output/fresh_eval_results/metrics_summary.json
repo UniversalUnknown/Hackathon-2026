@@ -1,0 +1,156 @@
+{
+  "total_runtime_s": 70.37,
+  "per_image_ms": 1101.0,
+  "classical_baseline": {
+    "n": 60,
+    "pass_5px": 0.45,
+    "pass_4px": 0.45,
+    "pass_2px": 0.4,
+    "pass_1px": 0.2167,
+    "pass_0.5px": 0.0833,
+    "mean": 97.234,
+    "median": 29.656,
+    "worst": 763.889,
+    "max_failures": 33
+  },
+  "model": {
+    "n": 60,
+    "pass_5px": 0.6333,
+    "pass_4px": 0.6333,
+    "pass_2px": 0.5667,
+    "pass_1px": 0.3,
+    "pass_0.5px": 0.1167,
+    "mean": 66.605,
+    "median": 1.715,
+    "worst": 628.853,
+    "max_failures": 22
+  },
+  "by_noise_level": {
+    "severe": {
+      "n": 25,
+      "mean": 126.021,
+      "pass_5px": 0.44,
+      "pass_1px": 0.08
+    },
+    "high": {
+      "n": 13,
+      "mean": 7.951,
+      "pass_5px": 0.7692,
+      "pass_1px": 0.3846
+    },
+    "medium": {
+      "n": 15,
+      "mean": 48.521,
+      "pass_5px": 0.7333,
+      "pass_1px": 0.5333
+    },
+    "low": {
+      "n": 7,
+      "mean": 2.085,
+      "pass_5px": 0.8571,
+      "pass_1px": 0.4286
+    }
+  },
+  "by_architecture": {
+    "dram_1x": {
+      "n": 9,
+      "mean": 51.629,
+      "pass_5px": 0.7778,
+      "pass_1px": 0.3333
+    },
+    "finfet_7nm": {
+      "n": 16,
+      "mean": 68.261,
+      "pass_5px": 0.4375,
+      "pass_1px": 0.25
+    },
+    "finfet_10nm": {
+      "n": 7,
+      "mean": 87.969,
+      "pass_5px": 0.2857,
+      "pass_1px": 0.0
+    },
+    "dram_dense": {
+      "n": 10,
+      "mean": 112.372,
+      "pass_5px": 0.7,
+      "pass_1px": 0.3
+    },
+    "finfet_14nm": {
+      "n": 12,
+      "mean": 1.049,
+      "pass_5px": 1.0,
+      "pass_1px": 0.5
+    },
+    "dram_loose": {
+      "n": 6,
+      "mean": 114.562,
+      "pass_5px": 0.5,
+      "pass_1px": 0.3333
+    }
+  },
+  "by_scale": {
+    "10.000": {
+      "n": 37,
+      "mean": 70.48,
+      "pass_5px": 0.6757,
+      "pass_1px": 0.3243
+    },
+    "10.500": {
+      "n": 6,
+      "mean": 44.34,
+      "pass_5px": 0.5,
+      "pass_1px": 0.1667
+    },
+    "11.000": {
+      "n": 7,
+      "mean": 20.155,
+      "pass_5px": 0.5714,
+      "pass_1px": 0.2857
+    },
+    "9.000": {
+      "n": 7,
+      "mean": 79.952,
+      "pass_5px": 0.5714,
+      "pass_1px": 0.1429
+    },
+    "9.500": {
+      "n": 3,
+      "mean": 140.589,
+      "pass_5px": 0.6667,
+      "pass_1px": 0.6667
+    }
+  },
+  "by_rotation_deg": {
+    "0.000": {
+      "n": 42,
+      "mean": 71.077,
+      "pass_5px": 0.6667,
+      "pass_1px": 0.3571
+    },
+    "-2.000": {
+      "n": 4,
+      "mean": 49.663,
+      "pass_5px": 0.5,
+      "pass_1px": 0.0
+    },
+    "1.000": {
+      "n": 6,
+      "mean": 57.637,
+      "pass_5px": 0.5,
+      "pass_1px": 0.0
+    },
+    "2.000": {
+      "n": 5,
+      "mean": 7.576,
+      "pass_5px": 0.8,
+      "pass_1px": 0.4
+    },
+    "-1.000": {
+      "n": 3,
+      "mean": 142.904,
+      "pass_5px": 0.3333,
+      "pass_1px": 0.3333
+    }
+  }
+}

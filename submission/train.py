@@ -1,17 +1,24 @@
 #!/usr/bin/env python3
 """Train the ZNCC candidate re-ranker (see ml/ranker.py).
 
+Improvements over baseline:
+  - Focal Loss (gamma=2, alpha=0.25) to focus on hard negatives
+  - Cosine annealing LR with warm-up
+  - Gradient clipping for stable training
+  - Richer augmentation (Gaussian noise injection)
+
 Requires the candidate caches to exist (run prepare_candidates.py after
 generate_dataset.py). Validation metrics: candidate accuracy and how often the
 highest-probability candidate is the ground truth.
 
 Example:
     python prepare_candidates.py --split train
-    python train.py --config configs/default.json --epochs 20
+    python train.py --config configs/default.json --epochs 60 --variant global
 """
 
 import argparse
 import json
+import math
 import os
 import random
 import sys
@@ -19,8 +26,8 @@ import time
 
 import numpy as np
 import torch
-from torch.utils.data import DataLoader, Subset, random_split
-from torch.utils.data import Dataset
+import torch.nn.functional as F
+from torch.utils.data import DataLoader, Dataset
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -41,7 +48,9 @@ class _Subset(Dataset):
 
 
 class _PrecompDataset(Dataset):
-    """Dataset over the pre-materialised ranker_inputs.npz (fast training)."""
+    """Dataset over the pre-materialised ranker_inputs.npz (fast training).
+    Enhanced augmentation: Gaussian noise, random brightness/gamma, flips.
+    """
     def __init__(self, npz_path: str, aug: bool = True):
         d = np.load(npz_path)
         self.X = d["X"]
@@ -54,17 +63,60 @@ class _PrecompDataset(Dataset):
         return len(self.X)
 
     def __getitem__(self, i):
-        X = self.X[i]
-        F = self.F[i]
-        y = self.y[i]
+        X = self.X[i].copy()
+        F = self.F[i].copy()
+        y = self.y[i].copy()
         if self.aug:
-            rnd = random.Random(i)
+            rnd = random.Random(i + int(time.time() * 1000) % 10000)
+            # Spatial flips (valid because search+reference both flip)
             if rnd.random() < 0.5:
                 X = X[:, :, ::-1].copy()
             if rnd.random() < 0.5:
                 X = X[:, :, :, ::-1].copy()
+            # Brightness / contrast on search channel with improved augmentation
+            ch0 = X[:, 0] * rnd.uniform(0.80, 1.25) + rnd.uniform(-0.08, 0.08)
+            X[:, 0] = np.clip(ch0, -5.0, 5.0)
+            # Gaussian noise injection (mimics severe SEM noise) - more aggressive
+            if rnd.random() < 0.5:
+                sigma = rnd.uniform(0.08, 0.4)
+                noise = np.random.default_rng().normal(0.0, sigma, X[:, 0].shape).astype(np.float32)
+                X[:, 0] = np.clip(X[:, 0] + noise, -5.0, 5.0)
+            # Random gamma (non-linear intensity mapping) on search channel
+            if rnd.random() < 0.4:
+                gamma = rnd.uniform(0.7, 1.3)
+                # Apply gamma in [0, 1] space then re-z-score
+                ch = X[:, 0]
+                mn, mx_ = ch.min(), ch.max()
+                if mx_ > mn:
+                    ch_n = (ch - mn) / (mx_ - mn + 1e-6)
+                    ch_n = np.power(np.clip(ch_n, 0.0, 1.0), gamma)
+                    ch = ch_n * (mx_ - mn) + mn
+                X[:, 0] = ch
+            # Additional salt-and-pepper noise on search
+            if rnd.random() < 0.2:
+                prob = rnd.uniform(0.005, 0.02)
+                mask_sp = np.random.uniform(0, 1, X[:, 0].shape) < prob
+                X[:, 0][mask_sp] = rnd.choice([-5.0, 5.0], size=mask_sp.sum())
         return (torch.from_numpy(X), torch.from_numpy(F),
                 torch.from_numpy(y))
+
+
+def focal_loss(logits: torch.Tensor, labels: torch.Tensor,
+               pos_weight: torch.Tensor | None = None,
+               gamma: float = 2.0, alpha: float = 0.25) -> torch.Tensor:
+    """Binary Focal Loss.
+    Down-weights easy negatives (well-classified) and focuses training on
+    hard positives/negatives. Critical for imbalanced candidate sets where
+    most candidates are true negatives.
+    """
+    # Standard BCE term (unweighted for focal re-weighting)
+    bce = F.binary_cross_entropy_with_logits(
+        logits, labels, pos_weight=pos_weight, reduction="none")
+    p = torch.sigmoid(logits)
+    p_t = p * labels + (1 - p) * (1 - labels)
+    alpha_t = alpha * labels + (1 - alpha) * (1 - labels)
+    focal_weight = alpha_t * (1.0 - p_t) ** gamma
+    return (focal_weight * bce).mean()
 
 
 def parse_args():
@@ -79,6 +131,12 @@ def parse_args():
     p.add_argument("--limit", type=int, default=None,
                    help="use only the first N cached samples")
     p.add_argument("--variant", default="local", choices=["local", "global"])
+    p.add_argument("--warmup-epochs", type=int, default=5,
+                   help="linear LR warm-up epochs before cosine decay")
+    p.add_argument("--focal-gamma", type=float, default=2.0)
+    p.add_argument("--focal-alpha", type=float, default=0.25)
+    p.add_argument("--grad-clip", type=float, default=1.0,
+                   help="gradient norm clipping (0 = disabled)")
     return p.parse_args()
 
 
@@ -123,10 +181,15 @@ def main():
     in_ch = 3 if args.variant == "global" else 2
     model = Ranker(n_feat=1 + len(cfg["infer"]["scales"]), in_ch=in_ch)
     model.to(args.device)
+
     opt = torch.optim.AdamW(model.parameters(), lr=lr,
                             weight_decay=tcfg["weight_decay"])
-    sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=epochs)
 
+    # Cosine annealing LR scheduler
+    cosine_sched = torch.optim.lr_scheduler.CosineAnnealingLR(
+        opt, T_max=max(1, epochs - args.warmup_epochs))
+
+    # Compute class balance for pos_weight
     n_pos = 0
     n_tot = 0
     if isinstance(ds, _PrecompDataset):
@@ -145,28 +208,52 @@ def main():
     print(f"positive rate {pos_rate:.3f} -> pos_weight {pos_weight.item():.2f}")
 
     os.makedirs(os.path.dirname(tcfg["checkpoint"]) or ".", exist_ok=True)
+    grad_accum_steps = tcfg.get("gradient_accumulation_steps", 1)
     print(f"train={len(train_ds)} val={len(val_ds)} cands/img={k} "
-          f"batch={batch} epochs={epochs} lr={lr}")
+          f"batch={batch} epochs={epochs} lr={lr} "
+          f"warmup={args.warmup_epochs} focal(gamma={args.focal_gamma},alpha={args.focal_alpha}) "
+          f"grad_accum={grad_accum_steps}")
 
     best_val = -1.0
     for epoch in range(epochs):
+        # --- LR warm-up: linearly ramp from lr/10 to lr ---
+        if epoch < args.warmup_epochs:
+            warmup_factor = (epoch + 1) / max(args.warmup_epochs, 1)
+            for pg in opt.param_groups:
+                pg["lr"] = lr * warmup_factor
+        elif epoch == args.warmup_epochs:
+            # Reset to base lr before cosine takes over
+            for pg in opt.param_groups:
+                pg["lr"] = lr
+
         model.train()
         t0 = time.time()
         tot = 0.0
         steps = 0
         tr_hits = []
-        for X, F, y, mask in train_loader:
+        accum_step = 0
+        for batch_idx, (X, F, y, mask) in enumerate(train_loader):
             X, F, y = X.to(args.device), F.to(args.device), y.to(args.device)
             logits = model(X.flatten(0, 1), F.flatten(0, 1))
             labels = y.flatten()
             valid = mask.flatten()
-            loss = torch.nn.functional.binary_cross_entropy_with_logits(
-                logits[valid], labels[valid], pos_weight=pos_weight)
-            opt.zero_grad()
+            loss = focal_loss(logits[valid], labels[valid],
+                              pos_weight=pos_weight,
+                              gamma=args.focal_gamma,
+                              alpha=args.focal_alpha)
+            # Gradient accumulation
+            loss = loss / grad_accum_steps
             loss.backward()
-            opt.step()
-            tot += float(loss.item())
-            steps += 1
+            accum_step += 1
+            
+            if accum_step % grad_accum_steps == 0:
+                if args.grad_clip > 0:
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip)
+                opt.step()
+                opt.zero_grad()
+                steps += 1
+            
+            tot += float(loss.item()) * grad_accum_steps
             with torch.no_grad():
                 prob = torch.sigmoid(logits).view(X.shape[0], k)
                 for i in range(X.shape[0]):
@@ -176,7 +263,10 @@ def main():
                     pos_ids = torch.nonzero(py > 0.5).flatten().tolist()
                     if pos_ids:
                         tr_hits.append(int(pp.argmax() in pos_ids))
-        sched.step()
+
+        # Advance cosine LR only after warm-up
+        if epoch >= args.warmup_epochs:
+            cosine_sched.step()
 
         model.eval()
         with torch.no_grad():
@@ -198,10 +288,11 @@ def main():
             hit = float(np.mean(hits))
             hit_pos = float(np.mean(hits_pos)) if hits_pos else float("nan")
             tr_hit = float(np.mean(tr_hits)) if tr_hits else float("nan")
-            print(f"[{epoch}/{epochs}] train_loss={tot/steps:.4f} "
-                  f"train_top1_hit={tr_hit*100:.1f}% "
-                  f"val_acc={acc*100:.1f}% val_top1_hit={hit*100:.1f}% "
-                  f"val_top1_hit_pos={hit_pos*100:.1f}% "
+            cur_lr = opt.param_groups[0]["lr"]
+            print(f"[{epoch+1}/{epochs}] loss={tot/max(steps,1):.4f} lr={cur_lr:.5f} "
+                  f"train_top1={tr_hit*100:.1f}% "
+                  f"val_acc={acc*100:.1f}% val_top1={hit*100:.1f}% "
+                  f"val_top1_pos={hit_pos*100:.1f}% "
                   f"({time.time()-t0:.0f}s)", flush=True)
 
         if hit > best_val:
@@ -213,9 +304,9 @@ def main():
                 "val_acc": acc,
                 "val_top1_hit": hit,
             }, tcfg["checkpoint"])
-            print(f"  saved checkpoint -> {tcfg['checkpoint']}")
+            print(f"  ✓ saved checkpoint -> {tcfg['checkpoint']} (val_top1={hit*100:.1f}%)")
 
-    print(f"done. best val top1-hit = {best_val*100:.1f}%")
+    print(f"\ndone. best val top1-hit = {best_val*100:.1f}%")
 
 
 if __name__ == "__main__":
