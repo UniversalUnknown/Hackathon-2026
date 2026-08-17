@@ -96,7 +96,7 @@ class _PrecompDataset(Dataset):
             if rnd.random() < 0.2:
                 prob = rnd.uniform(0.005, 0.02)
                 mask_sp = np.random.uniform(0, 1, X[:, 0].shape) < prob
-                X[:, 0][mask_sp] = rnd.choice([-5.0, 5.0], size=mask_sp.sum())
+                X[:, 0][mask_sp] = np.random.choice([-5.0, 5.0], size=int(mask_sp.sum()))
         return (torch.from_numpy(X), torch.from_numpy(F),
                 torch.from_numpy(y))
 
