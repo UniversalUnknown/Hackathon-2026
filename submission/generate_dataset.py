@@ -22,8 +22,8 @@ import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from data_gen import generate_pair, sample_training_params, NOISE_LEVELS
-from ml.preprocess import SEARCH_IN  # noqa: F401  (import check)
+from src import generate_pair, sample_training_params, NOISE_LEVELS
+from model.preprocess import SEARCH_IN  # noqa: F401  (import check)
 
 
 def parse_args():

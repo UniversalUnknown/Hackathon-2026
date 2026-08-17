@@ -31,8 +31,8 @@ from torch.utils.data import DataLoader, Dataset
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from ml.dataset import CandidateDataset, collate_candidates
-from ml.ranker import Ranker
+from model.dataset import CandidateDataset, collate_candidates
+from model.ranker import Ranker
 
 
 class _Subset(Dataset):

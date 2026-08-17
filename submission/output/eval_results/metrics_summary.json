@@ -1,6 +1,6 @@
 {
-  "total_runtime_s": 45.72,
-  "per_image_ms": 741.4,
+  "total_runtime_s": 45.4,
+  "per_image_ms": 704.0,
   "classical_baseline": {
     "n": 60,
     "pass_5px": 0.4667,

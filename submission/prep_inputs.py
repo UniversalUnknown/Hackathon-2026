@@ -24,7 +24,7 @@ import cv2
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT))
 
-from ml.ranker import build_rank_inputs, build_rank_inputs_global
+from model.ranker import build_rank_inputs, build_rank_inputs_global
 
 BUILDERS = {"local": build_rank_inputs, "global": build_rank_inputs_global}
 

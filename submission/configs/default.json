@@ -1,45 +1,43 @@
 {
   "dataset": {
     "root": "output/dataset",
-    "train_n": 1200,
+    "train_n": 1500,
     "train_seed": 20260815,
-    "eval_n": 80,
+    "eval_n": 60,
     "eval_seed": 20260901,
     "architectures": [
       "dram_1x", "dram_dense", "dram_loose",
       "finfet_10nm", "finfet_7nm", "finfet_14nm"
     ],
-    "scale_options": [9.0, 9.5, 10.0, 10.5, 11.0],
+    "scale_options": [9.0, 9.25, 9.5, 9.75, 10.0, 10.25, 10.5, 10.75, 11.0],
     "rotation_options": [-2.0, -1.0, 0.0, 1.0, 2.0],
-    "scale_prob": 0.45,
-    "rotation_prob": 0.45
+    "scale_prob": 0.40,
+    "rotation_prob": 0.40
   },
   "train": {
-    "epochs": 100,
-    "batch_size": 48,
-    "lr": 0.00025,
-    "weight_decay": 2e-4,
-    "pos_margin_px": 18.0,
-    "candidate_k": 16,
+    "epochs": 50,
+    "batch_size": 32,
+    "lr": 0.0008,
+    "weight_decay": 1e-4,
+    "pos_margin_px": 25.0,
+    "candidate_k": 12,
     "candidate_min_dist": 20,
     "checkpoint": "output/weights/ranker.pt",
-    "val_split": 0.1,
-    "gradient_accumulation_steps": 2
+    "val_split": 0.1
   },
   "infer": {
-    "scales": [9.0, 9.5, 10.0, 10.5, 11.0],
+    "scales": [9.0, 9.25, 9.5, 9.75, 10.0, 10.25, 10.5, 10.75, 11.0],
     "rotations": [-2.0, -1.0, 0.0, 1.0, 2.0],
     "refine_search_radius": 12,
-    "min_score": 0.15,
-    "n_candidates": 16,
+    "min_score": 0.20,
+    "n_candidates": 12,
     "candidate_min_dist": 20,
     "prefilter_median": 5,
-    "prefilter_bilateral": true,
     "selection": "fuse_cnn",
-    "defect_weight": 0.5,
-    "cnn_weight": 0.4,
-    "conf_threshold": 0.25,
-    "tie_epsilon": 0.025,
+    "defect_weight": 0.6,
+    "cnn_weight": 0.15,
+    "conf_threshold": 0.35,
+    "tie_epsilon": 0.02,
     "output_csv": "output/localize_results.csv"
   }
 }

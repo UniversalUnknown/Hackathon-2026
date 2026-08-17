@@ -31,8 +31,8 @@ import numpy as np
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from ml.predict import Localizer
-from ml.zncc import correlation_maps, top_k_candidates, refine_peak
+from model.predict import Localizer
+from model.zncc import correlation_maps, top_k_candidates, refine_peak
 
 
 THRESHOLDS = [5.0, 4.0, 2.0, 1.0, 0.5]

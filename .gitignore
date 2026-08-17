@@ -17,6 +17,8 @@ submission/output/dataset/
 submission/output/eval_output/failures
 submission/output/eval_output/correct
 submission/output/eval_results/failures/*
+submission/generate_visualizations.py
+submission/output/fresh_eval_results
 
 # OS / editor junk
 .DS_Store

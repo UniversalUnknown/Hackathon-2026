@@ -17,7 +17,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from ml.predict import Localizer
+from model.predict import Localizer
 
 
 def main() -> None:
