@@ -119,8 +119,6 @@ submission/
 numpy>=1.26  |  opencv-python-headless>=4.8  |  scipy>=1.10  |  torch>=2.0
 ```
 
-CPU-only, no GPU required. Python 3.10+.
-
 ---
 
-*Applied Materials Drift-Sense Hackathon 2026*
+Due to hardware and time limitations we couldn't push this model further.
