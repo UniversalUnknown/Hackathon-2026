@@ -104,12 +104,16 @@ Configuration Summary:
     ]
     run_command(cmd, "Step 4: Evaluate on test set and generate metrics")
 
+    # Step 5: Generate visualizations
+    cmd = [sys.executable, "generate_eval_visualizations.py"]
+    run_command(cmd, "Step 5: Generate evaluation visualizations (correct/failed cases)")
+
     # Summary
     metrics_path = Path("output/eval_results/metrics_summary.json")
     if metrics_path.exists():
         metrics = json.load(open(metrics_path))
         print("\n" + "="*80)
-        print("FINAL EVALUATION METRICS")
+        print("FINAL EVALUATION METRICS & VISUALIZATION RESULTS")
         print("="*80)
         model_metrics = metrics.get("model", {})
         print(f"""
@@ -126,7 +130,18 @@ Comparison to Baseline:
   • Baseline @ 5px: {metrics.get('classical_baseline', {}).get('pass_5px', 0)*100:.1f}%
   • Improvement: +{(model_metrics.get('pass_5px', 0) - metrics.get('classical_baseline', {}).get('pass_5px', 0))*100:.1f}pp
 
-❌ Status: {'ACHIEVED 80% TARGET ✓' if model_metrics.get('pass_5px', 0) >= 0.80 else 'Further optimization needed'}
+✓ Visualizations Generated:
+  • Correct predictions: output/eval_output/correct/ ({int(model_metrics.get('n', 0) * model_metrics.get('pass_5px', 0))} images)
+  • Failed predictions: output/eval_output/failures/ ({int(model_metrics.get('n', 0) * (1 - model_metrics.get('pass_5px', 0)))} images)
+  • Interactive viewer: output/eval_output/index.html
+  • Summary report: output/eval_output/RESULTS.md
+  • Statistics: output/eval_output/summary.txt
+
+Status: {'ACHIEVED 80% TARGET ✓' if model_metrics.get('pass_5px', 0) >= 0.80 else 'Further optimization needed'}
+
+📊 View Results:
+  → Open index.html in browser: output/eval_output/index.html
+  → Read detailed report: output/eval_output/RESULTS.md
 """)
 
 

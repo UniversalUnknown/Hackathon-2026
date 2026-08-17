@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Drift-Sense Evaluation Results</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { 
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 10px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.3);
+            overflow: hidden;
+        }
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 40px;
+            text-align: center;
+        }
+        .header h1 { font-size: 2.5em; margin-bottom: 10px; }
+        .header p { font-size: 1.1em; opacity: 0.9; }
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            padding: 40px;
+            background: #f8f9fa;
+        }
+        .stat-box {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            border-left: 4px solid #667eea;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+        .stat-box h3 { color: #667eea; margin-bottom: 10px; }
+        .stat-value { font-size: 2em; font-weight: bold; color: #333; }
+        .stat-unit { color: #666; font-size: 0.9em; }
+        .gallery {
+            padding: 40px;
+        }
+        .gallery h2 {
+            margin-bottom: 30px;
+            color: #333;
+            border-bottom: 2px solid #667eea;
+            padding-bottom: 10px;
+        }
+        .image-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+            gap: 20px;
+            margin-bottom: 50px;
+        }
+        .image-card {
+            background: white;
+            border-radius: 8px;
+            overflow: hidden;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            transition: transform 0.3s, box-shadow 0.3s;
+            cursor: pointer;
+        }
+        .image-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 5px 20px rgba(0,0,0,0.2);
+        }
+        .image-card img {
+            width: 100%;
+            height: 200px;
+            object-fit: cover;
+        }
+        .image-info {
+            padding: 15px;
+            font-size: 0.9em;
+        }
+        .pass { border-top: 3px solid #28a745; }
+        .fail { border-top: 3px solid #dc3545; }
+        .tabs {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+            border-bottom: 2px solid #eee;
+        }
+        .tab {
+            padding: 10px 20px;
+            cursor: pointer;
+            border: none;
+            background: none;
+            font-size: 1em;
+            color: #666;
+            border-bottom: 3px solid transparent;
+            transition: all 0.3s;
+        }
+        .tab.active {
+            color: #667eea;
+            border-bottom-color: #667eea;
+        }
+        .tab-content { display: none; }
+        .tab-content.active { display: block; }
+        .footer {
+            background: #f8f9fa;
+            padding: 20px;
+            text-align: center;
+            color: #666;
+            border-top: 1px solid #eee;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>Drift-Sense Evaluation Results</h1>
+            <p>Localization Accuracy Visualization Report</p>
+        </div>
+        
+        <div class="stats">
+            <div class="stat-box">
+                <h3>Total Samples</h3>
+                <div class="stat-value">60</div>
+            </div>
+            <div class="stat-box">
+                <h3>Passed Cases</h3>
+                <div class="stat-value" style="color: #28a745;">40</div>
+                <div class="stat-unit">±5.0px accuracy</div>
+            </div>
+            <div class="stat-box">
+                <h3>Failed Cases</h3>
+                <div class="stat-value" style="color: #dc3545;">20</div>
+            </div>
+            <div class="stat-box">
+                <h3>Pass Rate</h3>
+                <div class="stat-value" style="color: #667eea;">66.7%</div>
+                <div class="stat-unit">Target: >=80%</div>
+            </div>
+            <div class="stat-box">
+                <h3>Mean Error</h3>
+                <div class="stat-value">61.90</div>
+                <div class="stat-unit">pixels</div>
+            </div>
+            <div class="stat-box">
+                <h3>Median Error</h3>
+                <div class="stat-value">1.50</div>
+                <div class="stat-unit">pixels</div>
+            </div>
+        </div>
+        
+        <div class="gallery">
+            <div class="tabs">
+                <button class="tab active" onclick="switchTab(event, 'correct')">
+                    Correct Predictions (40)
+                </button>
+                <button class="tab" onclick="switchTab(event, 'failures')">
+                    Failed Predictions (20)
+                </button>
+            </div>
+            
+            <div id="correct" class="tab-content active">
+                <h2>Correct Predictions (Error <= 5.0px)</h2>
+                <p style="margin-bottom: 20px; color: #666;">
+                    These 40 cases show successful localization where the predicted spot is 
+                    within 5 pixels of the ground truth. Green circle: ground truth, Cyan circle: prediction.
+                </p>
+                <div class="image-grid" id="correct-grid">
+                    <!-- Populated by JavaScript -->
+                </div>
+            </div>
+            
+            <div id="failures" class="tab-content">
+                <h2>Failed Predictions (Error > 5.0px)</h2>
+                <p style="margin-bottom: 20px; color: #666;">
+                    These 20 cases show localization failures where the predicted spot exceeded 
+                    the 5-pixel tolerance. Green circle: ground truth, Red circle: prediction.
+                </p>
+                <div class="image-grid" id="failures-grid">
+                    <!-- Populated by JavaScript -->
+                </div>
+            </div>
+        </div>
+        
+        <div class="footer">
+            <p>Generated: 2026-08-17 | Drift-Sense Evaluation Report</p>
+            <p>Results Directory: <code>output/eval_output/</code></p>
+        </div>
+    </div>
+    
+    <script>
+        function switchTab(evt, tabName) {
+            var contents = document.getElementsByClassName("tab-content");
+            for (var i = 0; i < contents.length; i++) {
+                contents[i].classList.remove("active");
+            }
+            
+            var tabs = document.getElementsByClassName("tab");
+            for (var i = 0; i < tabs.length; i++) {
+                tabs[i].classList.remove("active");
+            }
+            
+            document.getElementById(tabName).classList.add("active");
+            evt.currentTarget.classList.add("active");
+        }
+        
+        // Populate image grids
+        fetch('correct/')
+            .then(r => r.text())
+            .then(html => {
+                var parser = new DOMParser();
+                var doc = parser.parseFromString(html, 'text/html');
+                var links = doc.querySelectorAll('a[href$=".png"]');
+                var grid = document.getElementById('correct-grid');
+                links.forEach(link => {
+                    var filename = link.textContent;
+                    if (filename.endsWith('_PASS.png')) {
+                        var card = document.createElement('div');
+                        card.className = 'image-card pass';
+                        card.onclick = function() { window.open('correct/' + filename); };
+                        card.innerHTML = `
+                            <img src="correct/${filename}" alt="${filename}">
+                            <div class="image-info">
+                                <strong>${filename.replace('_PASS.png', '')}</strong><br>
+                                Status: PASS
+                            </div>
+                        `;
+                        grid.appendChild(card);
+                    }
+                });
+            })
+            .catch(e => console.log('Note: Directory listing not available'));
+        
+        fetch('failures/')
+            .then(r => r.text())
+            .then(html => {
+                var parser = new DOMParser();
+                var doc = parser.parseFromString(html, 'text/html');
+                var links = doc.querySelectorAll('a[href$=".png"]');
+                var grid = document.getElementById('failures-grid');
+                links.forEach(link => {
+                    var filename = link.textContent;
+                    if (filename.endsWith('_FAIL.png')) {
+                        var card = document.createElement('div');
+                        card.className = 'image-card fail';
+                        card.onclick = function() { window.open('failures/' + filename); };
+                        card.innerHTML = `
+                            <img src="failures/${filename}" alt="${filename}">
+                            <div class="image-info">
+                                <strong>${filename.replace('_FAIL.png', '')}</strong><br>
+                                Status: FAIL
+                            </div>
+                        `;
+                        grid.appendChild(card);
+                    }
+                });
+            })
+            .catch(e => console.log('Note: Directory listing not available'));
+    </script>
+</body>
+</html>

@@ -1,0 +1,44 @@
+DRIFT-SENSE EVALUATION STATISTICS
+================================================================================
+
+SUMMARY
+--------------------------------------------------------------------------------
+Total Samples:                 60
+Passed (error <= 5.0px):       40
+Failed (error > 5.0px):       20
+Pass Rate:                     66.7%
+
+PASSED CASES (error <= 5.0px)
+--------------------------------------------------------------------------------
+Count:                         40
+Min error:                     0.07px
+Max error:                     3.00px
+Mean error:                    1.11px
+Median error:                  0.98px
+Std deviation:                 0.66px
+
+FAILED CASES (error > 5.0px)
+--------------------------------------------------------------------------------
+Count:                         20
+Min error:                     8.70px
+Max error:                     628.85px
+Mean error:                    183.49px
+Median error:                  87.53px
+Std deviation:                 188.72px
+
+ACCURACY BY THRESHOLD
+--------------------------------------------------------------------------------
+@ 0.5px:                       11.7%
+@ 1.0px:                       35.0%
+@ 2.0px:                       60.0%
+@ 5.0px:                       66.7%
+
+OUTPUT LOCATION
+--------------------------------------------------------------------------------
+Base Directory:                D:\MONARCH\Hackathon-2026\submission\output\eval_output
+Correct Predictions:           output\eval_output/correct/
+Failed Predictions:            output\eval_output/failures/
+Summary Report:                output\eval_output/RESULTS.md
+Interactive Viewer:            output\eval_output/index.html
+
+GENERATED: 2026-08-17

@@ -14,7 +14,9 @@ env/
 
 # Generated dataset (regenerate with generate_dataset.py)
 submission/output/dataset/
-submission/output/eval_results/failures
+submission/output/eval_output/failures
+submission/output/eval_output/correct
+submission/output/eval_results/failures/*
 
 # OS / editor junk
 .DS_Store
