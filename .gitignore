@@ -13,12 +13,10 @@ venv/
 env/
 
 # Generated dataset (regenerate with generate_dataset.py)
-submission/output/dataset/
-submission/output/eval_output/failures
-submission/output/eval_output/correct
-submission/output/eval_results/failures/*
-submission/generate_visualizations.py
-submission/output/fresh_eval_results
+submission/output/eval_results/failure
+submission/output/eval_results/success_overlay
+submission/results
+submission/output/dataset
 
 # OS / editor junk
 .DS_Store

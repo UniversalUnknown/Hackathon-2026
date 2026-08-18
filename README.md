@@ -8,6 +8,8 @@ reference pattern inside the search image.
 
 ## Pipeline Overview
 
+![Pipeline Flowchart](submission/images/pipeline_flowchart.png)
+
 **8 stages**: Input → Adaptive Denoising → Multi-Scale ZNCC (9 scales × 5 rotations = 45 variants)
 → Phase Correlation Seed → Top-12 Candidates → CNN Re-Ranker (ResBlock+SE, 638K params)
 → Defect Residue NCC → Noise-Aware Fusion + Sub-Pixel Refinement
@@ -15,6 +17,8 @@ reference pattern inside the search image.
 ---
 
 ## Results
+
+![Results Summary](submission/images/results_summary.png)
 
 | Metric | Model | Classical Baseline | Improvement |
 |--------|-------|-------------------|-------------|
@@ -24,7 +28,11 @@ reference pattern inside the search image.
 | Mean Error | 61.9 px | 95.5 px | −35% |
 | Median Error | 1.5 px | 22.4 px | −93% |
 
+![Accuracy Chart](submission/images/accuracy_chart.png)
+
 ### Performance by Noise Level
+
+![Noise Chart](submission/images/noise_chart.png)
 
 | Noise | Samples | Pass @ 5px | Mean Error |
 |-------|---------|------------|------------|
@@ -35,23 +43,57 @@ reference pattern inside the search image.
 
 ---
 
-## Success Cases (green = ground truth, cyan = prediction)
+## ZNCC Prediction Details
 
-<img src="submission/images/success_00039.png" width="300" alt="00039 — 0.35px"/>
+Each localization produces a ZNCC score, CNN probability, matched scale,
+and rotation angle. Below are the key predictions:
 
-<img src="submission/images/success_00043.png" width="300" alt="00043 — 0.38px"/>
+### Success Cases — high ZNCC score + correct scale
 
----
+| ID | Scale | Rot | ZNCC | CNN | Error | Arch | Noise |
+|----|-------|-----|------|-----|-------|------|-------|
+| 4 | 10.0x | 0.0° | **0.858** | 0.595 | **0.07px** | FinFET 14nm | Medium |
+| 33 | 11.0x | 0.0° | **0.792** | 0.591 | **0.18px** | DRAM 1x | High |
+| 26 | 10.0x | 2.0° | **0.899** | 0.590 | **0.18px** | FinFET 14nm | Medium |
+| 16 | 9.5x | 0.0° | **0.955** | 0.598 | **0.28px** | DRAM Loose | Low |
+| 56 | 10.0x | 0.0° | **0.832** | 0.577 | **0.30px** | FinFET 14nm | Medium |
+| 14 | 9.0x | 2.0° | **0.797** | 0.568 | **0.31px** | FinFET 7nm | Severe |
+| 24 | 10.0x | 0.0° | **0.967** | 0.588 | **0.50px** | FinFET 14nm | Low |
+| 17 | 11.0x | -1.0° | **0.813** | 0.564 | **0.52px** | FinFET 14nm | Medium |
 
-## Failure Cases
+High ZNCC (≥0.8) with correct scale = reliable match. Even under severe noise
+(sample 14, ZNCC 0.797 at 9.0x) the defect residue disambiguates correctly.
 
-<img src="submission/images/failure_00035.png" width="300" alt="00035"/>
+<img src="submission/images/success_00004.png" width="300" alt="00004"/>
 
-<img src="submission/images/failure_00045.png" width="300" alt="00045"/>
+<img src="submission/images/success_00016.png" width="300" alt="00016"/>
 
-<img src="submission/images/overlay_fail_00045.png" width="300" alt="overlay 00045"/>
+### Failure Cases — misleading ZNCC or wrong scale selection
 
-<img src="submission/images/overlay_fail_00055.png" width="300" alt="overlay 00055"/>
+| ID | Scale | Rot | ZNCC | CNN | Error | Arch | Noise |
+|----|-------|-----|------|-----|-------|------|-------|
+| 54 | 10.0x | 0.0° | 0.622 | 0.593 | **628.9px** | DRAM Dense | Severe |
+| 48 | 10.0x | 0.0° | 0.615 | 0.564 | **492.7px** | DRAM Loose | Severe |
+| 52 | 9.0x | 0.0° | 0.719 | 0.577 | **427.2px** | FinFET 10nm | Medium |
+| 0 | 10.0x | 0.0° | 0.515 | 0.581 | **412.7px** | DRAM 1x | Severe |
+| 25 | 10.5x | 0.0° | **0.890** | 0.591 | **183.8px** | FinFET 7nm | Medium |
+| 21 | 10.0x | -2.0° | 0.559 | 0.577 | **152.0px** | DRAM Loose | Severe |
+
+Failures show two patterns:
+1. **Low ZNCC (< 0.65) + severe noise** → ZNCC peaks are random, wrong periodic
+   duplicate selected (samples 54, 48, 0, 55, 40, 21)
+2. **High ZNCC but wrong location** → pattern is perfectly periodic so a different
+   site scores nearly as well (sample 25: ZNCC 0.890 at 10.5x but wrong site)
+
+<img src="submission/images/failure_00048.png" width="300" alt="00048"/>
+
+<img src="submission/images/failure_00054.png" width="300" alt="00054"/>
+
+### Side-by-Side Comparisons
+
+<img src="submission/images/overlay_00004.png" width="300" alt="overlay 00004"/>
+
+<img src="submission/images/overlay_00016.png" width="300" alt="overlay 00016"/>
 
 **Root causes**: periodic pattern ambiguity under severe noise (44% of failures are severe-noise cases where all ZNCC peaks are random).
 
@@ -105,9 +147,11 @@ submission/
 │   ├── success/, failures/, overlays/
 │   ├── metrics_summary.json, localize_results.csv
 ├── images/                     ← result and overlay samples
-│   ├── success_00039.png, success_00043.png
-│   ├── failure_00035.png, failure_00045.png
-│   └── overlay_fail_00045.png, overlay_fail_00055.png
+│   ├── pipeline_flowchart.png, accuracy_chart.png, noise_chart.png
+│   ├── results_summary.png
+│   ├── success_00004.png, success_00016.png
+│   ├── failure_00048.png, failure_00054.png
+│   └── overlay_00004.png, overlay_00016.png
 └── references/references.md
 ```
 
